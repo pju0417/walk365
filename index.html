@@ -67,6 +67,13 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .hdr-btns{display:flex;gap:7px}
 .btn-h{background:var(--card);border:1px solid var(--border);color:var(--dim);border-radius:9px;width:37px;height:37px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.95rem;transition:all .2s}
 .btn-h:hover{color:var(--text);border-color:var(--accent)}
+.btn-refresh-all{background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.28);color:var(--success);border-radius:9px;padding:0 11px;height:37px;display:flex;align-items:center;gap:5px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;font-size:.73rem;font-weight:700;transition:all .2s;white-space:nowrap}
+.btn-refresh-all:hover{background:rgba(6,214,160,.22);border-color:var(--success)}
+.btn-refresh-all:active{transform:scale(.95)}
+.btn-refresh-all.spin span{animation:spin .7s linear infinite}
+.btn-logout{background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.25);color:var(--danger);border-radius:9px;padding:0 12px;height:37px;display:flex;align-items:center;gap:5px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;font-size:.75rem;font-weight:700;transition:all .2s;white-space:nowrap}
+.btn-logout:hover{background:rgba(239,71,111,.22);border-color:var(--danger)}
+.btn-logout:active{transform:scale(.95)}
 
 .date-bar{background:linear-gradient(90deg,var(--accent),#ff9a5c);padding:8px 15px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .date-bar .d{font-size:.8rem;font-weight:700;color:#fff}
@@ -375,6 +382,10 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
       <div class="hdr-class" id="hdrClass">학반</div>
     </div>
     <div class="hdr-btns">
+      <button class="btn-refresh-all" id="btnRefreshAll" onclick="globalRefresh()">
+        <span>🔄</span> 새로고침
+      </button>
+      <button class="btn-logout" onclick="logout()">↩ 로그아웃</button>
       <button class="btn-h" onclick="openSettings()">⚙️</button>
     </div>
   </div>
@@ -476,7 +487,11 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
       <button class="btn-ps" onclick="closeSettings()">닫기</button>
       <button class="btn-pp" onclick="saveSettings()">저장</button>
     </div>
-    <button class="btn-pd" onclick="resetData()">내 데이터 초기화</button>
+    <div class="p-divider"></div>
+    <button onclick="logout()" style="width:100%;background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.28);color:var(--danger);border-radius:9px;padding:12px;font-family:'Noto Sans KR',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;margin-bottom:8px;transition:all .2s">
+      ↩ 로그아웃 (다른 계정으로 전환)
+    </button>
+    <button class="btn-pd" onclick="resetData()">🗑 내 기록 모두 삭제</button>
   </div>
 </div>
 
@@ -490,7 +505,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
    나머지 설정(학반, 미션명 등)은 교사용 앱에서
    저장하면 자동으로 여기에 반영됩니다.
 ══════════════════════════════════════════ */
-const HARDCODED_GAS_URL = 'https://script.google.com/macros/s/AKfycbyy_WJiRga8k4GLPf-6RkLLZhfoe3vfiQ4zc3hUQ0g0aRx5BLGQSKOPsF5E1HquwrSgig/exec';   // ← 여기에 GAS URL 입력 (선택사항)
+const HARDCODED_GAS_URL = 'https://script.google.com/macros/s/AKfycbx5ddShK7GQc4CPkaSk1KiWnlZiEbzpGDBcDlSCbfxdo485gT_JevV9zA1PIGqZ2FTw/exec';   // ← 여기에 GAS URL 입력 (선택사항)
 
 /* ══════════════════════════════════════════
    DATA
@@ -540,6 +555,7 @@ function getTarget(cfg, y, m) {
 
 /* Session state */
 let sessionLaps = 0;
+let isResubmitMode = false;  // 재제출 모드: 0바퀴 제출 허용
 let remoteConfig = null;
 
 function cfg() { return remoteConfig || lc() || defConfig(); }
@@ -648,8 +664,11 @@ function startApp() {
 function goMain() {
   show('screen-main');
   sessionLaps = 0;
+  isResubmitMode = false;
   renderMain();
   switchTab('today');
+  // 앱 열 때 미동기화 기록 자동 재시도
+  setTimeout(() => retrySyncUnsynced(), 1500);
 }
 
 function renderMain() {
@@ -670,7 +689,10 @@ function renderMain() {
 function showNormal(rec) {
   document.getElementById('stNormal').style.display='block';
   document.getElementById('stSubmitted').style.display='none';
-  sessionLaps = rec ? (rec.laps||0) : sessionLaps;
+  // 재제출 모드가 아닐 때만 기존 기록으로 복원 (재제출 시엔 resubmit()에서 이미 세팅)
+  if(!isResubmitMode){
+    sessionLaps = rec ? (rec.laps !== undefined ? rec.laps : 0) : sessionLaps;
+  }
   renderRings(); updateStatus(); updateSubBtn();
 }
 
@@ -699,21 +721,49 @@ function renderRings() {
 }
 
 function updateStatus(){
-  const c=cfg(),req=c.lapsRequired||3;
-  const dot=document.getElementById('sdot'),txt=document.getElementById('stext');
+  const c=cfg(), req=c.lapsRequired||3;
+  const dot=document.getElementById('sdot'), txt=document.getElementById('stext');
   dot.className='sdot';
-  if(sessionLaps===0){dot.classList.add('wait');txt.textContent='아직 미션을 시작하지 않았어요.';}
-  else if(sessionLaps<req){dot.classList.add('part');txt.textContent=`${sessionLaps}/${req}바퀴 완료 — 조금만 더!`;}
-  else{dot.classList.add('comp');txt.textContent=`🎉 ${req}바퀴 완주! 아래 버튼으로 제출하세요.`;}
+  if(isResubmitMode && sessionLaps===0){
+    dot.classList.add('wait');
+    txt.textContent='0바퀴로 제출하면 해당 날짜 기록이 삭제됩니다.';
+  } else if(sessionLaps===0){
+    dot.classList.add('wait');
+    txt.textContent='아직 미션을 시작하지 않았어요.';
+  } else if(sessionLaps<req){
+    dot.classList.add('part');
+    txt.textContent=`${sessionLaps}/${req}바퀴 완료 — 조금만 더!`;
+  } else {
+    dot.classList.add('comp');
+    txt.textContent=`🎉 ${req}바퀴 완주! 아래 버튼으로 제출하세요.`;
+  }
 }
 
 function updateSubBtn(){
-  const c=cfg(),req=c.lapsRequired||3;
+  const c=cfg(), req=c.lapsRequired||3;
   const btn=document.getElementById('btnSub');
   btn.className='btn-sub';
-  if(sessionLaps===0){btn.classList.add('idle');btn.textContent='바퀴를 기록한 뒤 제출하세요';}
-  else if(sessionLaps<req){btn.classList.add('partial');btn.textContent=`📤 지금까지 기록 제출 (${sessionLaps}/${req}바퀴)`;}
-  else{btn.classList.add('complete');btn.textContent='✅ 미션 완료! 제출하기';}
+  if(isResubmitMode && sessionLaps===0){
+    // 재제출 모드에서 0바퀴 — 경고색 버튼으로 클릭 가능
+    btn.style.cssText='';
+    btn.classList.add('partial');
+    btn.style.background='rgba(239,71,111,.15)';
+    btn.style.color='var(--danger)';
+    btn.style.border='2px solid rgba(239,71,111,.4)';
+    btn.textContent='🗑 0바퀴로 수정 제출 (기록 삭제)';
+  } else if(sessionLaps===0){
+    btn.style.cssText='';
+    btn.classList.add('idle');
+    btn.textContent='바퀴를 기록한 뒤 제출하세요';
+  } else if(sessionLaps<req){
+    btn.style.cssText='';
+    btn.classList.add('partial');
+    btn.textContent=`📤 지금까지 기록 제출 (${sessionLaps}/${req}바퀴)`;
+  } else {
+    btn.style.cssText='';
+    btn.classList.add('complete');
+    btn.textContent='✅ 미션 완료! 제출하기';
+  }
 }
 
 function addLap(){
@@ -733,12 +783,36 @@ function undoLap(){
 function showSubmitted(rec){
   document.getElementById('stNormal').style.display='none';
   document.getElementById('stSubmitted').style.display='block';
-  const c=cfg(),req=c.lapsRequired||3,laps=rec.laps||0;
+  const c=cfg(), req=c.lapsRequired||3;
+  // laps가 0일 수 있으므로 ||0 대신 명시적 처리
+  const laps = (rec.laps !== undefined && rec.laps !== null) ? rec.laps : 0;
+  const isUpdate = rec.isUpdate || false;
+
+  // 바퀴 도트
   let dots='';
-  for(let i=1;i<=req;i++) dots+=`<div class="sub-dot ${i<=laps?'on':'off'}">${i<=laps?'✓':i}</div>`;
+  if(laps===0){
+    // 0바퀴: 삭제/미수행 표시
+    dots=`<div style="font-size:.8rem;color:var(--danger);background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.25);border-radius:20px;padding:4px 14px;font-weight:700">기록 없음 (0바퀴)</div>`;
+  } else {
+    for(let i=1;i<=req;i++) dots+=`<div class="sub-dot ${i<=laps?'on':'off'}">${i<=laps?'✓':i}</div>`;
+  }
   document.getElementById('subDots').innerHTML=dots;
-  document.getElementById('subInfo').innerHTML=`제출 시각: <strong>${rec.submittedAt||'—'}</strong><br>${laps>=req?'🎉 오늘 미션을 완전히 달성했어요!':laps+'/'+req+'바퀴 기록됨'}`;
-  syncUi(rec.synced?'ok':'idle');
+
+  // 상태 메시지
+  let statusLine;
+  if(laps===0) statusLine='해당 날짜 기록이 삭제되었습니다.';
+  else if(laps>=req) statusLine='🎉 오늘 미션을 완전히 달성했어요!';
+  else statusLine=`${laps}/${req}바퀴 기록됨`;
+
+  const updateBadge = isUpdate
+    ? `<span style="display:inline-block;background:rgba(255,209,102,.18);color:var(--accent2);border-radius:10px;padding:1px 9px;font-size:.68rem;font-weight:700;margin-bottom:5px">🔄 수정 제출됨</span><br>`
+    : '';
+
+  document.getElementById('subInfo').innerHTML =
+    updateBadge +
+    `제출 시각: <strong>${rec.submittedAt||'—'}</strong><br>${statusLine}`;
+
+  syncUi(rec.synced ? 'ok' : 'idle');
 }
 
 function syncUi(s){
@@ -751,34 +825,180 @@ function syncUi(s){
 }
 
 async function submitMission(){
-  if(sessionLaps<=0) return;
-  const d=ls(),c=cfg();
-  const dt=today(),time=nowTime(),laps=sessionLaps,req=c.lapsRequired||3;
+  const c=cfg();
+  const req=c.lapsRequired||3;
+  const laps=sessionLaps;
+
+  // 0바퀴는 재제출 모드일 때만 허용
+  if(laps<=0 && !isResubmitMode) return;
+
+  // 0바퀴 재제출 최종 확인
+  if(laps===0 && isResubmitMode){
+    if(!confirm('0바퀴로 제출하면 이 날짜의 기록이 삭제됩니다.\n계속하시겠습니까?')) return;
+  }
+
+  const d=ls();
+  const dt=today(), time=nowTime();
+
+  const existing = d.history?.[dt];
+  const prevLaps = (existing && existing.laps !== undefined) ? existing.laps : null;
+
+  // 동일한 값으로 재제출 방지
+  if(isResubmitMode && prevLaps === laps){
+    toast('변경사항이 없습니다.','warn');
+    return;
+  }
+
+  const isUpdate = isResubmitMode && prevLaps !== null;
   if(!d.history) d.history={};
-  d.history[dt]={laps,submittedAt:time,submitted:true,synced:false};
+  d.history[dt]={ laps, submittedAt:time, submitted:true, synced:false, isUpdate };
   ss(d);
+
+  // 재제출 모드 해제
+  isResubmitMode = false;
+
   showSubmitted(d.history[dt]);
-  document.getElementById('dateStatus').textContent=laps>=req?'✅ 완료':'📤 제출됨';
+  document.getElementById('dateStatus').textContent =
+    laps===0 ? '🗑 기록 삭제됨' : laps>=req ? '✅ 완료' : '📤 제출됨';
+
   const url=gasUrl();
-  if(!url){syncUi('idle');return;}
+  if(!url){ syncUi('idle'); return; }
+
   syncUi('syn');
   try{
-    await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({date:dt,name:d.name,className:d.className,laps,lapsRequired:req,submittedAt:time,isProxy:false})});
-    const fresh=ls(); if(fresh.history?.[dt]){fresh.history[dt].synced=true;ss(fresh);}
-    syncUi('ok');toast('✅ 구글 시트에 기록 완료!');
-  } catch{syncUi('err');toast('❌ 연동 실패 — 인터넷 확인','warn');}
+    await fetch(url, {
+      method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        date:dt, name:d.name, className:d.className,
+        laps, lapsRequired:req, submittedAt:time,
+        isProxy:false, isUpdate
+      })
+    });
+    const fresh=ls();
+    if(fresh.history?.[dt]){ fresh.history[dt].synced=true; ss(fresh); }
+    syncUi('ok');
+    if(laps===0){
+      toast(`🗑 ${prevLaps}바퀴 → 0바퀴 (기록 삭제) 완료`);
+    } else if(isUpdate && prevLaps !== null){
+      toast(`🔄 기록 수정 완료! ${prevLaps}바퀴 → ${laps}바퀴`);
+    } else {
+      toast('✅ 구글 시트에 기록 완료!');
+    }
+  } catch {
+    syncUi('err');
+    toast('❌ 연동 실패 — 인터넷 확인','warn');
+  }
 }
 
 function resubmit(){
-  const d=ls(),dt=today();
-  sessionLaps=d.history?.[dt]?.laps||0;
-  if(d.history?.[dt]) d.history[dt].submitted=false,ss(d);
-  document.getElementById('dateStatus').textContent='재제출 중…';
-  showNormal(d.history?.[dt]);
+  const d=ls(), dt=today();
+  const existing = d.history?.[dt];
+
+  // 기존 laps 복원 (0 포함)
+  sessionLaps = (existing && existing.laps !== undefined) ? existing.laps : 0;
+
+  // 재제출 모드 활성화 → 0바퀴 제출 허용
+  isResubmitMode = true;
+
+  // 제출 상태 해제
+  if(existing){
+    existing.submitted = false;
+    ss(d);
+  }
+
+  document.getElementById('dateStatus').textContent='기록 수정 중…';
+  showNormal(existing);
+  toast(`↩ 기존 기록(${sessionLaps}바퀴) 불러옴. 수정 후 다시 제출하세요.`);
 }
 
-/* ── HISTORY ── */
+/* ══════════════════════════════════════════
+   전체 새로고침 + 미동기화 재시도
+══════════════════════════════════════════ */
+async function globalRefresh() {
+  const btn = document.getElementById('btnRefreshAll');
+  btn.classList.add('spin');
+  btn.disabled = true;
+  let msgs = [];
+
+  try {
+    // ① 미동기화 기록 재시도
+    const retried = await retrySyncUnsynced();
+    if (retried > 0) msgs.push(`${retried}건 동기화`);
+
+    // ② 설정 재로드 (학반 목록 등)
+    const url = gasUrl();
+    if (url) {
+      try {
+        const freshCfg = await fetchConfig(url);
+        remoteConfig = freshCfg;
+        sc(freshCfg);
+        msgs.push('설정 갱신');
+      } catch(_) {}
+    }
+
+    // ③ 현재 화면 갱신
+    renderMain();
+    const activeTab = document.querySelector('.tab.active')?.id?.replace('tab-','');
+    if (activeTab === 'history') renderHistory();
+    if (activeTab === 'lb') { lbData = []; await fetchLb(); msgs.push('순위표 갱신'); }
+
+    toast('🔄 새로고침 완료' + (msgs.length ? ` (${msgs.join(', ')})` : ''));
+  } catch(e) {
+    toast('⚠️ 일부 항목 갱신 실패','warn');
+  } finally {
+    btn.classList.remove('spin');
+    btn.disabled = false;
+  }
+}
+
+// 미동기화된 모든 기록을 GAS에 재전송
+async function retrySyncUnsynced() {
+  const url = gasUrl();
+  if (!url) return 0;
+  const d = ls(), c = cfg();
+  const req = c.lapsRequired || 3;
+  let count = 0;
+
+  const entries = Object.entries(d.history || {});
+  for (const [dt, rec] of entries) {
+    // submitted이지만 synced가 false인 기록만 재시도
+    if (!rec.submitted || rec.synced) continue;
+
+    try {
+      await fetch(url, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: dt,
+          name: d.name,
+          className: d.className,
+          laps: rec.laps,
+          lapsRequired: req,
+          submittedAt: rec.submittedAt || '',
+          isProxy: false,
+          isUpdate: rec.isUpdate || false
+        })
+      });
+      // no-cors라 성공 여부 확인 불가 → 낙관적으로 synced=true 처리
+      rec.synced = true;
+      count++;
+    } catch(_) {
+      // 실패 시 다음 기회에 재시도
+    }
+  }
+
+  if (count > 0) {
+    ss(d);
+    // 오늘 기록이 재시도됐으면 syncUi 갱신
+    const todayRec = d.history?.[today()];
+    if (todayRec?.submitted) syncUi(todayRec.synced ? 'ok' : 'err');
+  }
+  return count;
+}
+
+
 let hm={y:new Date().getFullYear(),m:new Date().getMonth()+1};
 
 function renderHistory(){
@@ -916,7 +1136,25 @@ function saveSettings(){
   if(name)d.name=name; if(cls)d.className=cls; d.gasUrl=url; ss(d);
   closeSettings(); renderMain(); toast('✅ 저장되었습니다');
 }
-function resetData(){ if(!confirm('모든 기록이 삭제됩니다.'))return; localStorage.removeItem(SKEY);localStorage.removeItem(SKEY+'_cfg');location.reload(); }
+
+// 로그아웃: 이름·학반만 지우고 기록·설정은 보존
+// → 다시 로그인하면 기록이 복구됨
+function logout(){
+  closeSettings();
+  const d=ls();
+  d.name=''; d.className=''; ss(d);
+  sessionLaps=0;
+  // 설정 캐시는 유지 (GAS URL, config)
+  show('screen-setup');
+  buildSetup();
+  // 이름·학반 입력란 초기화
+  document.getElementById('setupName').value='';
+  document.getElementById('setupClass').selectedIndex=0;
+  document.getElementById('btnStart').disabled=true;
+  toast('✅ 로그아웃 되었습니다');
+}
+
+function resetData(){ if(!confirm('내 모든 기록이 영구 삭제됩니다. 계속하시겠습니까?'))return; localStorage.removeItem(SKEY);localStorage.removeItem(SKEY+'_cfg');location.reload(); }
 
 /* ── UTILS ── */
 function toast(msg,type){
