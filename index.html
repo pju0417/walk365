@@ -1079,21 +1079,37 @@ function renderLb(){
   const d=ls();
   const filtered=lbFilter==='__all__'?lbData:lbData.filter(r=>r.className===lbFilter);
   const sorted=[...filtered].sort((a,b)=>b.completeDays-a.completeDays||b.totalLaps-a.totalLaps);
+
+  // 동점자 순위 계산 함수
+  function calcRank(idx) {
+    if(idx === 0) return 1;
+    const prev = sorted[idx-1];
+    const cur  = sorted[idx];
+    if(cur.completeDays === prev.completeDays && cur.totalLaps === prev.totalLaps){
+      return calcRank(idx-1); // 동점 → 앞 학생과 같은 순위
+    }
+    return idx + 1; // 다름 → 실제 인덱스 기반 순위 (건너뜀 포함)
+  }
+
   const myIdx=sorted.findIndex(r=>r.name===d.name&&r.className===d.className);
   const myCard=document.getElementById('myCard');
   if(myIdx>=0){
     const me=sorted[myIdx];
+    const myRankNum = calcRank(myIdx);
     myCard.classList.add('show');
     document.getElementById('myInfo').textContent=`${me.completeDays}일 완료 · ${me.pct}% · ${me.totalLaps}바퀴`;
-    document.getElementById('myRank').innerHTML=`${myIdx+1}<span>위</span>`;
+    document.getElementById('myRank').innerHTML=`${myRankNum}<span>위</span>`;
   }else myCard.classList.remove('show');
+
   const em=['🥇','🥈','🥉'];
   document.getElementById('lbList').innerHTML=sorted.length?sorted.map((r,i)=>{
-    const rank=i+1,tc=rank<=3?'top'+rank:'',nc=rank<=3?'r'+rank:'';
+    const rank=calcRank(i);
+    const tc=rank<=3?'top'+rank:'', nc=rank<=3?'r'+rank:'';
     const bc=r.pct>=100?'var(--success)':r.pct>=50?'var(--accent2)':'var(--accent)';
     const isme=r.name===d.name&&r.className===d.className;
+    const rankLabel = rank<=3 ? em[rank-1] : rank;
     return `<div class="lrow ${tc}">
-      <div class="lr-num ${nc}">${rank<=3?em[i]:rank}</div>
+      <div class="lr-num ${nc}">${rankLabel}</div>
       <div class="lr-info">
         <div class="lr-name">${r.name}${isme?'<span class="me-bdg">나</span>':''}</div>
         <div class="lr-sub">${r.className} · ${r.completeDays}일 · ${r.totalLaps}바퀴</div>
