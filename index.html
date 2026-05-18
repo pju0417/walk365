@@ -505,7 +505,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
    나머지 설정(학반, 미션명 등)은 교사용 앱에서
    저장하면 자동으로 여기에 반영됩니다.
 ══════════════════════════════════════════ */
-const HARDCODED_GAS_URL = 'https://script.google.com/macros/s/AKfycbx5ddShK7GQc4CPkaSk1KiWnlZiEbzpGDBcDlSCbfxdo485gT_JevV9zA1PIGqZ2FTw/exec';   // ← 여기에 GAS URL 입력 (선택사항)
+const HARDCODED_GAS_URL = '';   // ← 여기에 GAS URL 입력 (선택사항)
 
 /* ══════════════════════════════════════════
    DATA
@@ -919,6 +919,8 @@ async function globalRefresh() {
   const btn = document.getElementById('btnRefreshAll');
   btn.classList.add('spin');
   btn.disabled = true;
+  // 캐시 초기화 → 새로고침 시 서버에서 최신 데이터 가져옴
+  histCache = {};
   let msgs = [];
 
   try {
@@ -1001,44 +1003,89 @@ async function retrySyncUnsynced() {
 
 let hm={y:new Date().getFullYear(),m:new Date().getMonth()+1};
 
-function renderHistory(){
-  const d=ls(),c=cfg();
+/* ── 내 기록 탭: 서버 데이터 캐시 ── */
+let histCache = {};   // key: "YYYY-MM" → {date: laps}
+
+function changeHM(dir){ hm.m+=dir; if(hm.m>12){hm.m=1;hm.y++;}if(hm.m<1){hm.m=12;hm.y--;} loadHistory(); }
+
+function renderHistory(){ loadHistory(); }   // 탭 전환 시 호출되는 진입점
+
+function loadHistory(){
+  const key=`${hm.y}-${pad(hm.m)}`;
+  if(histCache[key]){ _renderHistView(histCache[key]); return; }
+  fetchHistoryFromGas(key);
+}
+
+async function fetchHistoryFromGas(key){
+  const d=ls(), url=gasUrl();
+  document.getElementById('hCal').innerHTML =
+    '<div style="grid-column:1/-1;text-align:center;padding:18px;color:var(--dim);font-size:.76rem">⏳ 기록 불러오는 중…</div>';
+  if(!url){ _renderHistView({}); return; }
+  try{
+    const res = await fetch(
+      `${url}?action=studentMonth&name=${encodeURIComponent(d.name)}&className=${encodeURIComponent(d.className)}&month=${encodeURIComponent(key)}&t=${Date.now()}`,
+      { method:'GET', redirect:'follow' }
+    );
+    const json = await res.json();
+    const serverMap = json.success ? (json.data || {}) : {};
+    histCache[key] = serverMap;
+    _renderHistView(serverMap);
+  } catch(e) {
+    _renderHistView({});
+  }
+}
+
+function _renderHistView(serverMap){
+  const d=ls(), c=cfg();
   const {y,m}=hm;
   const prefix=`${y}-${pad(m)}`;
   const td=today();
   const days=new Date(y,m,0).getDate();
   const target=getTarget(c,y,m);
+  const req=c.lapsRequired||3;
+
   document.getElementById('hMonthLabel').textContent=`${y}년 ${m}월`;
-  let comp=0,laps=0;
-  for(let i=1;i<=days;i++){
-    const dt=`${prefix}-${pad(i)}`; if(dt>td)break;
+
+  // 날짜별 laps: 서버 값 우선 → localStorage 보조
+  function getLaps(dt){
+    if(serverMap && serverMap.hasOwnProperty(dt)) return serverMap[dt];
     const r=(d.history||{})[dt];
-    if(r){laps+=r.laps||0;if((r.laps||0)>=(c.lapsRequired||3))comp++;}
+    return r ? (r.laps !== undefined ? r.laps : 0) : -1;
+  }
+
+  let comp=0, totalLaps=0;
+  for(let i=1;i<=days;i++){
+    const dt=`${prefix}-${pad(i)}`; if(dt>td) break;
+    const lp=getLaps(dt); if(lp<0) continue;
+    totalLaps+=lp; if(lp>=req) comp++;
   }
   const pct=target>0?Math.min(100,Math.round(comp/target*100)):0;
+
   document.getElementById('hStats').innerHTML=`
     <div class="hsc"><div class="v" style="color:var(--success)">${comp}</div><div class="l">완료일</div></div>
     <div class="hsc"><div class="v" style="color:var(--accent2)">${target}</div><div class="l">이달 목표</div></div>
     <div class="hsc"><div class="v" style="color:var(--info)">${pct}<span style="font-size:.75rem">%</span></div><div class="l">달성률</div></div>`;
+
   const fdow=new Date(y,m-1,1).getDay();
   let cal='';
   for(let i=0;i<fdow;i++) cal+='<div class="cc empty"></div>';
   for(let i=1;i<=days;i++){
     const dt=`${prefix}-${pad(i)}`;
-    const fut=dt>td,mis=isMD(c,dt),ist=dt===td;
-    const r=(d.history||{})[dt], lp=r?r.laps||0:0;
+    const fut=dt>td, mis=isMD(c,dt), ist=dt===td;
+    const lp=getLaps(dt);
     let cls='cc';
-    if(!fut&&lp>=(c.lapsRequired||3)) cls+=' c3';
-    else if(!fut&&lp>0) cls+=' c'+lp;
-    if(fut) cls+=' future'; if(!mis&&!fut) cls+=' nm'; if(ist) cls+=' today';
+    if(!fut&&lp>=req)   cls+=' c3';
+    else if(!fut&&lp>0) cls+=' c'+Math.min(lp,2);
+    if(fut) cls+=' future';
+    if(!mis&&!fut) cls+=' nm';
+    if(ist) cls+=' today';
     if(mis&&fut) cls+=' ms';
-    const lbl=lp>=(c.lapsRequired||3)?'✓':lp>0?lp:i;
-    const sub=lp>0&&lp<(c.lapsRequired||3)?`<div class="csub">${lp}바퀴</div>`:'';
+    const lbl=lp>=req?'✓':lp>0?lp:i;
+    const sub=lp>0&&lp<req?`<div class="csub">${lp}바퀴</div>`:'';
     cal+=`<div class="${cls}">${lbl}${sub}</div>`;
   }
   document.getElementById('hCal').innerHTML=cal;
 }
-function changeHM(d){hm.m+=d;if(hm.m>12){hm.m=1;hm.y++;}if(hm.m<1){hm.m=12;hm.y--;}renderHistory();}
 
 /* ── LEADERBOARD ── */
 let lbFilter='__all__', lbData=[];
