@@ -93,6 +93,21 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 .mc-name{font-size:1.05rem;font-weight:700;margin-bottom:20px}
 
 .lap-rings{display:flex;justify-content:center;gap:14px;margin-bottom:22px}
+/* 바퀴 수 직접 입력 */
+.lap-input-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:20px}
+.lap-number-row{display:flex;align-items:center;gap:14px}
+.lap-minus,.lap-plus{width:52px;height:52px;border-radius:50%;border:2px solid var(--border);background:var(--card);color:var(--text);font-size:1.6rem;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s cubic-bezier(.34,1.56,.64,1);flex-shrink:0}
+.lap-minus:hover{border-color:var(--danger);color:var(--danger);background:rgba(239,71,111,.1)}
+.lap-plus:hover{border-color:var(--success);color:var(--success);background:rgba(6,214,160,.1)}
+.lap-minus:active,.lap-plus:active{transform:scale(.88)}
+.lap-count-box{display:flex;flex-direction:column;align-items:center;gap:2px}
+.lap-number{font-family:'Bebas Neue',sans-serif;font-size:4.5rem;line-height:1;color:var(--text);min-width:80px;text-align:center;transition:color .2s}
+.lap-unit{font-size:.72rem;color:var(--dim);font-weight:600;letter-spacing:1px}
+.lap-number.has-laps{color:var(--success)}
+.lap-direct-input{background:var(--card2);border:1px solid var(--border);border-radius:var(--Rs);padding:6px 14px;color:var(--text);font-family:'Noto Sans KR',sans-serif;font-size:.8rem;width:90px;text-align:center;outline:none;transition:border-color .2s;-moz-appearance:textfield}
+.lap-direct-input::-webkit-inner-spin-button{opacity:1}
+.lap-direct-input:focus{border-color:var(--success)}
+.lap-goal-hint{font-size:.7rem;color:var(--dim)}
 .lr{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
 .lr:active{transform:scale(.9)}
 .lr svg{width:70px;height:70px}
@@ -406,9 +421,24 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
         <div class="mission-card">
           <div class="mc-badge">🏟️ 오늘의 미션</div>
           <div class="mc-name" id="mcName">운동장 3바퀴 완주</div>
-          <div class="lap-rings" id="lapRings"></div>
-          <div class="tap-hint" id="tapHint">👆 바퀴 아이콘을 탭해서 기록하세요</div>
-          <button class="btn-undo-l" id="btnUndo" onclick="undoLap()" style="display:none">↩ 마지막 바퀴 취소</button>
+          <!-- 바퀴 수 직접 입력 UI -->
+          <div class="lap-input-wrap">
+            <div class="lap-number-row">
+              <div class="lap-minus" onclick="changeLap(-1)">−</div>
+              <div class="lap-count-box">
+                <div class="lap-number" id="lapNumber">0</div>
+                <div class="lap-unit">바퀴</div>
+              </div>
+              <div class="lap-plus" onclick="changeLap(1)">＋</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:.72rem;color:var(--dim)">직접 입력:</span>
+              <input type="number" class="lap-direct-input" id="lapDirectInput"
+                min="0" max="999" placeholder="0"
+                oninput="onLapInput(this.value)"
+                onchange="onLapInput(this.value)">
+            </div>
+          </div>
         </div>
         <div class="status-bdg">
           <div class="sdot wait" id="sdot"></div>
@@ -520,7 +550,7 @@ function defStudent() {
 function defConfig() {
   return {
     programName:'MISSION', missionName:'운동장 3바퀴 완주',
-    lapsRequired:3, missionWeekdays:[1,2,3,4,5],
+    monthlyLapGoal:0, missionWeekdays:[1,2,3,4,5],
     classes:[], monthlyTargets:{}, achieveThreshold:100,
     excludeDates:[], extraDates:[]
   };
@@ -545,12 +575,12 @@ function isMD(cfg, dt) {
   if ((cfg.extraDates||[]).includes(dt)) return true;
   return (cfg.missionWeekdays||[1,2,3,4,5]).includes(new Date(dt).getDay());
 }
+// 월별 목표 총 바퀴 수 (0=미설정)
 function getTarget(cfg, y, m) {
   const k=`${y}-${pad(m)}`;
-  if (cfg.monthlyTargets&&cfg.monthlyTargets[k]!==undefined) return Number(cfg.monthlyTargets[k]);
-  const days=new Date(y,m,0).getDate(); let c=0;
-  for(let i=1;i<=days;i++) if(isMD(cfg,`${y}-${pad(m)}-${pad(i)}`)) c++;
-  return c;
+  if (cfg.monthlyTargets&&cfg.monthlyTargets[k]!==undefined&&cfg.monthlyTargets[k]!=='')
+    return Number(cfg.monthlyTargets[k]);
+  return cfg.monthlyLapGoal || 0;
 }
 
 /* Session state */
@@ -680,7 +710,7 @@ function renderMain() {
   document.getElementById('dateLabel').textContent = todayLabel();
   const rec = (d.history||{})[today()];
   document.getElementById('dateStatus').textContent =
-    rec?.submitted ? ((rec.laps||0)>=(c.lapsRequired||3)?'✅ 완료':'📤 제출됨') : '미션 대기 중';
+    rec?.submitted ? `📤 ${rec.laps||0}바퀴 제출됨` : '미션 대기 중';
   if (rec?.submitted) showSubmitted(rec);
   else showNormal(rec);
 }
@@ -697,31 +727,15 @@ function showNormal(rec) {
 }
 
 function renderRings() {
-  const c=cfg(), req=c.lapsRequired||3;
-  const CIRC=2*Math.PI*28;
-  const colors=['#ff6b35','#ffd166','#06d6a0'];
-  let html='';
-  for(let n=1;n<=req;n++){
-    const done=sessionLaps>=n;
-    const col=colors[Math.min(n-1,2)];
-    html+=`<div class="lr ${done?'done':''}" onclick="addLap()" style="opacity:${done?1:sessionLaps===n-1?.9:.38}">
-      <svg width="70" height="70" viewBox="0 0 70 70">
-        <circle class="r-bg" cx="35" cy="35" r="28"/>
-        <circle class="r-fill" cx="35" cy="35" r="28"
-          stroke="${done?col:'rgba(255,255,255,.12)'}"
-          stroke-dasharray="${CIRC}" stroke-dashoffset="${done?0:CIRC}"/>
-        <text class="r-num" x="35" y="36" fill="${done?'#fff':'rgba(255,255,255,.3)'}">${done?'✓':n}</text>
-      </svg>
-      <div class="r-lbl">${n}바퀴</div>
-    </div>`;
-  }
-  document.getElementById('lapRings').innerHTML=html;
-  document.getElementById('btnUndo').style.display=sessionLaps>0?'block':'none';
-  document.getElementById('tapHint').style.display=sessionLaps>=req?'none':'flex';
+  const num=document.getElementById('lapNumber');
+  const inp=document.getElementById('lapDirectInput');
+  if(!num) return;
+  num.textContent=sessionLaps;
+  num.className='lap-number'+(sessionLaps>0?' has-laps':'');
+  if(inp && document.activeElement!==inp) inp.value=sessionLaps||'';
 }
 
 function updateStatus(){
-  const c=cfg(), req=c.lapsRequired||3;
   const dot=document.getElementById('sdot'), txt=document.getElementById('stext');
   dot.className='sdot';
   if(isResubmitMode && sessionLaps===0){
@@ -729,55 +743,47 @@ function updateStatus(){
     txt.textContent='0바퀴로 제출하면 해당 날짜 기록이 삭제됩니다.';
   } else if(sessionLaps===0){
     dot.classList.add('wait');
-    txt.textContent='아직 미션을 시작하지 않았어요.';
-  } else if(sessionLaps<req){
-    dot.classList.add('part');
-    txt.textContent=`${sessionLaps}/${req}바퀴 완료 — 조금만 더!`;
+    txt.textContent='오늘 달린 바퀴 수를 입력하세요.';
   } else {
     dot.classList.add('comp');
-    txt.textContent=`🎉 ${req}바퀴 완주! 아래 버튼으로 제출하세요.`;
+    txt.textContent=`${sessionLaps}바퀴 기록됨. 아래 버튼으로 제출하세요.`;
   }
 }
 
 function updateSubBtn(){
-  const c=cfg(), req=c.lapsRequired||3;
   const btn=document.getElementById('btnSub');
   btn.className='btn-sub';
+  btn.style.cssText='';
   if(isResubmitMode && sessionLaps===0){
-    // 재제출 모드에서 0바퀴 — 경고색 버튼으로 클릭 가능
-    btn.style.cssText='';
-    btn.classList.add('partial');
+    btn.classList.add('complete');
     btn.style.background='rgba(239,71,111,.15)';
     btn.style.color='var(--danger)';
     btn.style.border='2px solid rgba(239,71,111,.4)';
     btn.textContent='🗑 0바퀴로 수정 제출 (기록 삭제)';
   } else if(sessionLaps===0){
-    btn.style.cssText='';
     btn.classList.add('idle');
-    btn.textContent='바퀴를 기록한 뒤 제출하세요';
-  } else if(sessionLaps<req){
-    btn.style.cssText='';
-    btn.classList.add('partial');
-    btn.textContent=`📤 지금까지 기록 제출 (${sessionLaps}/${req}바퀴)`;
+    btn.textContent='오늘 달린 바퀴 수를 입력하세요';
   } else {
-    btn.style.cssText='';
     btn.classList.add('complete');
-    btn.textContent='✅ 미션 완료! 제출하기';
+    btn.textContent=`✅ ${sessionLaps}바퀴 제출하기`;
   }
 }
 
-function addLap(){
-  const req=(cfg().lapsRequired||3);
-  if(sessionLaps>=req) return;
-  sessionLaps++;
-  renderRings();updateStatus();updateSubBtn();
-  if(sessionLaps>=req){showConfetti();toast('🎉 '+req+'바퀴 완주! 제출 버튼을 눌러주세요!');}
+function changeLap(delta){
+  const newVal = sessionLaps + delta;
+  if(newVal < 0) return;
+  sessionLaps = newVal;
+  renderRings(); updateStatus(); updateSubBtn();
 }
-function undoLap(){
-  if(sessionLaps<=0) return;
-  sessionLaps--;
-  renderRings();updateStatus();updateSubBtn();
+function onLapInput(val){
+  const n=parseInt(val);
+  if(isNaN(n)||n<0) return;
+  sessionLaps=n;
+  renderRings(); updateStatus(); updateSubBtn();
 }
+// 하위 호환 (혹시 다른 곳에서 호출 시)
+function addLap(){ changeLap(1); }
+function undoLap(){ changeLap(-1); }
 
 /* ── SUBMITTED ── */
 function showSubmitted(rec){
@@ -789,20 +795,18 @@ function showSubmitted(rec){
   const isUpdate = rec.isUpdate || false;
 
   // 바퀴 도트
+  // 바퀴 수 뱃지
   let dots='';
   if(laps===0){
-    // 0바퀴: 삭제/미수행 표시
     dots=`<div style="font-size:.8rem;color:var(--danger);background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.25);border-radius:20px;padding:4px 14px;font-weight:700">기록 없음 (0바퀴)</div>`;
   } else {
-    for(let i=1;i<=req;i++) dots+=`<div class="sub-dot ${i<=laps?'on':'off'}">${i<=laps?'✓':i}</div>`;
+    dots=`<div style="font-family:'Bebas Neue',sans-serif;font-size:2.4rem;color:var(--success);line-height:1">${laps}</div><div style="font-size:.7rem;color:var(--dim);margin-top:2px">바퀴</div>`;
   }
   document.getElementById('subDots').innerHTML=dots;
 
-  // 상태 메시지
   let statusLine;
   if(laps===0) statusLine='해당 날짜 기록이 삭제되었습니다.';
-  else if(laps>=req) statusLine='🎉 오늘 미션을 완전히 달성했어요!';
-  else statusLine=`${laps}/${req}바퀴 기록됨`;
+  else statusLine=`오늘 ${laps}바퀴 달렸습니다! 🏃`;
 
   const updateBadge = isUpdate
     ? `<span style="display:inline-block;background:rgba(255,209,102,.18);color:var(--accent2);border-radius:10px;padding:1px 9px;font-size:.68rem;font-weight:700;margin-bottom:5px">🔄 수정 제출됨</span><br>`
@@ -826,11 +830,11 @@ function syncUi(s){
 
 async function submitMission(){
   const c=cfg();
-  const req=c.lapsRequired||3;
+  const req=3;
   const laps=sessionLaps;
 
   // 0바퀴는 재제출 모드일 때만 허용
-  if(laps<=0 && !isResubmitMode) return;
+  if(laps<=0 && !isResubmitMode) return;  // 0바퀴는 재제출 모드에서만 허용
 
   // 0바퀴 재제출 최종 확인
   if(laps===0 && isResubmitMode){
@@ -859,7 +863,7 @@ async function submitMission(){
 
   showSubmitted(d.history[dt]);
   document.getElementById('dateStatus').textContent =
-    laps===0 ? '🗑 기록 삭제됨' : laps>=req ? '✅ 완료' : '📤 제출됨';
+    laps===0 ? '🗑 기록 삭제됨' : `📤 ${laps}바퀴 제출됨`;
 
   const url=gasUrl();
   if(!url){ syncUi('idle'); return; }
@@ -1053,18 +1057,18 @@ function _renderHistView(serverMap){
     return r ? (r.laps !== undefined ? r.laps : 0) : -1;
   }
 
-  let comp=0, totalLaps=0;
+  let totalLaps=0;
   for(let i=1;i<=days;i++){
     const dt=`${prefix}-${pad(i)}`; if(dt>td) break;
     const lp=getLaps(dt); if(lp<0) continue;
-    totalLaps+=lp; if(lp>=req) comp++;
+    totalLaps+=lp;
   }
-  const pct=target>0?Math.min(100,Math.round(comp/target*100)):0;
+  const pct=target>0?Math.min(100,Math.round(totalLaps/target*100)):0;
 
   document.getElementById('hStats').innerHTML=`
-    <div class="hsc"><div class="v" style="color:var(--success)">${comp}</div><div class="l">완료일</div></div>
-    <div class="hsc"><div class="v" style="color:var(--accent2)">${target}</div><div class="l">이달 목표</div></div>
-    <div class="hsc"><div class="v" style="color:var(--info)">${pct}<span style="font-size:.75rem">%</span></div><div class="l">달성률</div></div>`;
+    <div class="hsc"><div class="v" style="color:var(--success)">${totalLaps}</div><div class="l">이달 바퀴</div></div>
+    <div class="hsc"><div class="v" style="color:var(--accent2)">${target>0?target:'—'}</div><div class="l">목표 바퀴</div></div>
+    <div class="hsc"><div class="v" style="color:var(--info)">${target>0?pct+'%':'—'}</div><div class="l">달성률</div></div>`;
 
   const fdow=new Date(y,m-1,1).getDay();
   let cal='';
@@ -1074,8 +1078,9 @@ function _renderHistView(serverMap){
     const fut=dt>td, mis=isMD(c,dt), ist=dt===td;
     const lp=getLaps(dt);
     let cls='cc';
-    if(!fut&&lp>=req)   cls+=' c3';
-    else if(!fut&&lp>0) cls+=' c'+Math.min(lp,2);
+    if(!fut&&lp>=10)     cls+=' c3';       // 10바퀴 이상: 초록
+    else if(!fut&&lp>=3) cls+=' c2';       // 3~9: 노랑
+    else if(!fut&&lp>0)  cls+=' c1';       // 1~2: 연주황
     if(fut) cls+=' future';
     if(!mis&&!fut) cls+=' nm';
     if(ist) cls+=' today';
@@ -1110,13 +1115,13 @@ async function fetchLb(){
   const btn=document.getElementById('lbBtn');
   btn.classList.add('sp');
   document.getElementById('lbList').innerHTML='<div class="lb-empty">⏳ 불러오는 중…</div>';
-  const c=cfg(), m=`${lbvm.y}-${pad(lbvm.m)}`,req=c.lapsRequired||3;
+  const c=cfg(), m=`${lbvm.y}-${pad(lbvm.m)}`,req=3;
   const target=getTarget(c,lbvm.y,lbvm.m);
   try{
     const res=await fetch(`${url}?action=leaderboard&month=${m}&lapsRequired=${req}`);
     const json=await res.json();
     if(!json.success) throw new Error(json.error);
-    lbData=(json.data||[]).map(r=>({...r,pct:target>0?Math.min(100,Math.round(r.completeDays/target*100)):0}));
+    lbData=(json.data||[]).map(r=>({...r,pct:target>0?Math.min(100,Math.round(r.totalLaps/target*100)):0}));
     renderLb(); toast('✅ 순위표 업데이트 완료');
   }catch(e){document.getElementById('lbList').innerHTML='<div class="lb-empty">❌ 불러오기 실패<br>인터넷 연결을 확인하세요</div>';toast('❌ 실패','warn');}
   finally{btn.classList.remove('sp');}
@@ -1125,14 +1130,14 @@ async function fetchLb(){
 function renderLb(){
   const d=ls();
   const filtered=lbFilter==='__all__'?lbData:lbData.filter(r=>r.className===lbFilter);
-  const sorted=[...filtered].sort((a,b)=>b.completeDays-a.completeDays||b.totalLaps-a.totalLaps);
+  const sorted=[...filtered].sort((a,b)=>b.totalLaps-a.totalLaps);
 
   // 동점자 순위 계산 함수
   function calcRank(idx) {
     if(idx === 0) return 1;
     const prev = sorted[idx-1];
     const cur  = sorted[idx];
-    if(cur.completeDays === prev.completeDays && cur.totalLaps === prev.totalLaps){
+    if(cur.totalLaps === prev.totalLaps){
       return calcRank(idx-1); // 동점 → 앞 학생과 같은 순위
     }
     return idx + 1; // 다름 → 실제 인덱스 기반 순위 (건너뜀 포함)
@@ -1144,7 +1149,7 @@ function renderLb(){
     const me=sorted[myIdx];
     const myRankNum = calcRank(myIdx);
     myCard.classList.add('show');
-    document.getElementById('myInfo').textContent=`${me.completeDays}일 완료 · ${me.pct}% · ${me.totalLaps}바퀴`;
+    document.getElementById('myInfo').textContent=`${me.totalLaps}바퀴${target>0?' · '+me.pct+'%':''}`;
     document.getElementById('myRank').innerHTML=`${myRankNum}<span>위</span>`;
   }else myCard.classList.remove('show');
 
@@ -1159,7 +1164,7 @@ function renderLb(){
       <div class="lr-num ${nc}">${rankLabel}</div>
       <div class="lr-info">
         <div class="lr-name">${r.name}${isme?'<span class="me-bdg">나</span>':''}</div>
-        <div class="lr-sub">${r.className} · ${r.completeDays}일 · ${r.totalLaps}바퀴</div>
+        <div class="lr-sub">${r.className} · ${r.totalLaps}바퀴${target>0?' · '+r.pct+'%':''}</div>
       </div>
       <div class="lr-r">
         <div class="lr-pct" style="color:${bc}">${r.pct}%</div>
@@ -1240,7 +1245,25 @@ document.getElementById('panelOv').addEventListener('click',e=>{
   if(e.target===document.getElementById('panelOv')) closeSettings();
 });
 
-setInterval(()=>{ if(document.getElementById('screen-main').style.display==='flex') document.getElementById('dateLabel').textContent=todayLabel(); },60000);
+/* 자동 새로고침: 5분마다 서버에서 데이터 갱신 */
+let autoRefreshInterval = null;
+function startAutoRefresh(){
+  if(autoRefreshInterval) clearInterval(autoRefreshInterval);
+  autoRefreshInterval = setInterval(async ()=>{
+    if(document.getElementById('screen-main').style.display!=='flex') return;
+    document.getElementById('dateLabel').textContent=todayLabel();
+    // histCache 초기화 → 내 기록 탭 자동 갱신
+    histCache={};
+    const activeTab=document.querySelector('.tab.active')?.id?.replace('tab-','');
+    if(activeTab==='history') loadHistory();
+    if(activeTab==='lb') fetchLb();
+    // 미동기화 기록 재시도
+    await retrySyncUnsynced();
+  }, 5 * 60 * 1000);  // 5분
+}
+startAutoRefresh();
+// 날짜 표시 1분 갱신
+setInterval(()=>{ document.getElementById('dateLabel').textContent=todayLabel(); }, 60000);
 
 
 /* ══════════════════════════════════════════
