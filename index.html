@@ -535,7 +535,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
    나머지 설정(학반, 미션명 등)은 교사용 앱에서
    저장하면 자동으로 여기에 반영됩니다.
 ══════════════════════════════════════════ */
-const HARDCODED_GAS_URL = 'https://script.google.com/macros/s/AKfycbx5ddShK7GQc4CPkaSk1KiWnlZiEbzpGDBcDlSCbfxdo485gT_JevV9zA1PIGqZ2FTw/exec';   // ← 여기에 GAS URL 입력 (선택사항)
+const HARDCODED_GAS_URL = '';   // ← 여기에 GAS URL 입력 (선택사항)
 
 /* ══════════════════════════════════════════
    DATA
@@ -1128,50 +1128,55 @@ async function fetchLb(){
 }
 
 function renderLb(){
-  const d=ls();
+  const d=ls(), c=cfg();
+  const target=getTarget(c,lbvm.y,lbvm.m);  // 누락됐던 target 선언
   const filtered=lbFilter==='__all__'?lbData:lbData.filter(r=>r.className===lbFilter);
   const sorted=[...filtered].sort((a,b)=>b.totalLaps-a.totalLaps);
 
-  // 동점자 순위 계산 함수
-  function calcRank(idx) {
-    if(idx === 0) return 1;
-    const prev = sorted[idx-1];
-    const cur  = sorted[idx];
-    if(cur.totalLaps === prev.totalLaps){
-      return calcRank(idx-1); // 동점 → 앞 학생과 같은 순위
-    }
-    return idx + 1; // 다름 → 실제 인덱스 기반 순위 (건너뜀 포함)
+  function calcRank(idx){
+    if(idx===0) return 1;
+    if(sorted[idx].totalLaps===sorted[idx-1].totalLaps) return calcRank(idx-1);
+    return idx+1;
   }
 
   const myIdx=sorted.findIndex(r=>r.name===d.name&&r.className===d.className);
   const myCard=document.getElementById('myCard');
   if(myIdx>=0){
     const me=sorted[myIdx];
-    const myRankNum = calcRank(myIdx);
     myCard.classList.add('show');
-    document.getElementById('myInfo').textContent=`${me.totalLaps}바퀴${target>0?' · '+me.pct+'%':''}`;
-    document.getElementById('myRank').innerHTML=`${myRankNum}<span>위</span>`;
-  }else myCard.classList.remove('show');
+    document.getElementById('myInfo').textContent=me.totalLaps+'바퀴'+(target>0?' · '+me.pct+'%':'');
+    document.getElementById('myRank').innerHTML=calcRank(myIdx)+'<span>위</span>';
+  } else myCard.classList.remove('show');
 
   const em=['🥇','🥈','🥉'];
-  document.getElementById('lbList').innerHTML=sorted.length?sorted.map((r,i)=>{
-    const rank=calcRank(i);
-    const tc=rank<=3?'top'+rank:'', nc=rank<=3?'r'+rank:'';
-    const bc=r.pct>=100?'var(--success)':r.pct>=50?'var(--accent2)':'var(--accent)';
-    const isme=r.name===d.name&&r.className===d.className;
-    const rankLabel = rank<=3 ? em[rank-1] : rank;
-    return `<div class="lrow ${tc}">
-      <div class="lr-num ${nc}">${rankLabel}</div>
-      <div class="lr-info">
-        <div class="lr-name">${r.name}${isme?'<span class="me-bdg">나</span>':''}</div>
-        <div class="lr-sub">${r.className} · ${r.totalLaps}바퀴${target>0?' · '+r.pct+'%':''}</div>
-      </div>
-      <div class="lr-r">
-        <div class="lr-pct" style="color:${bc}">${r.pct}%</div>
-        <div class="lr-bar-bg"><div class="lr-bar" style="width:${r.pct}%;background:${bc}"></div></div>
-      </div>
-    </div>`;
-  }).join(''):'<div class="lb-empty">📭 이 학반의 데이터가 없습니다</div>';
+  let html='';
+  if(sorted.length){
+    sorted.forEach(function(r,i){
+      const rank=calcRank(i);
+      const tc=rank<=3?' top'+rank:'';
+      const nc=rank<=3?' r'+rank:'';
+      const bc=r.pct>=100?'var(--success)':r.pct>=50?'var(--accent2)':'var(--accent)';
+      const isme=r.name===d.name&&r.className===d.className;
+      const medal=rank<=3?em[rank-1]:rank;
+      const meBadge=isme?'<span class="me-bdg">나</span>':'';
+      const sub=r.className+' · '+r.totalLaps+'바퀴'+(target>0?' · '+r.pct+'%':'');
+      const pctPx=Math.min(r.pct,100);
+      html+='<div class="lrow'+tc+'">'
+        +'<div class="lr-num'+nc+'">'+medal+'</div>'
+        +'<div class="lr-info">'
+          +'<div class="lr-name">'+r.name+meBadge+'</div>'
+          +'<div class="lr-sub">'+sub+'</div>'
+        +'</div>'
+        +'<div class="lr-r">'
+          +'<div class="lr-pct" style="color:'+bc+'">'+r.pct+'%</div>'
+          +'<div class="lr-bar-bg"><div class="lr-bar" style="width:'+pctPx+'%;background:'+bc+'"></div></div>'
+        +'</div>'
+      +'</div>';
+    });
+  } else {
+    html='<div class="lb-empty">📭 이 학반의 데이터가 없습니다</div>';
+  }
+  document.getElementById('lbList').innerHTML=html;
 }
 
 /* ── TAB ── */
