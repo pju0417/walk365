@@ -305,6 +305,21 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 
 .qr-err{color:var(--danger);font-size:.8rem;margin-top:16px;text-align:center;display:none}
 
+/* ── 공지 팝업 ── */
+.notice-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);z-index:900;align-items:center;justify-content:center;padding:20px}
+.notice-ov.on{display:flex}
+.notice-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--R);width:100%;max-width:400px;overflow:hidden;animation:scaleIn .3s cubic-bezier(.34,1.56,.64,1)}
+@keyframes scaleIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}
+.notice-header{background:linear-gradient(135deg,var(--accent),#ff8c5a);padding:16px 18px 14px;display:flex;align-items:center;gap:10px}
+.notice-icon{font-size:1.4rem;flex-shrink:0}
+.notice-title{font-size:1rem;font-weight:700;color:#fff;line-height:1.2}
+.notice-body{padding:18px 18px 14px;max-height:50vh;overflow-y:auto}
+.notice-content{font-size:.88rem;line-height:1.9;color:var(--text);white-space:pre-wrap;word-break:keep-all}
+.notice-footer{padding:12px 18px 18px;display:flex;gap:8px}
+.btn-notice-ok{flex:1;background:linear-gradient(135deg,var(--accent),#ff8c5a);color:#fff;border:none;border-radius:var(--Rs);padding:13px;font-family:'Noto Sans KR',sans-serif;font-size:.92rem;font-weight:700;cursor:pointer;transition:all .2s;box-shadow:0 4px 16px rgba(255,107,53,.3)}
+.btn-notice-ok:hover{box-shadow:0 6px 22px rgba(255,107,53,.45)}
+.btn-notice-skip{background:var(--card);color:var(--dim);border:1px solid var(--border);border-radius:var(--Rs);padding:13px 16px;font-family:'Noto Sans KR',sans-serif;font-size:.82rem;cursor:pointer}
+
 .wm{position:fixed;bottom:4px;right:9px;font-size:.54rem;color:rgba(255,255,255,.08);pointer-events:none;letter-spacing:1px;z-index:50}
 </style>
 </head>
@@ -527,6 +542,24 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
 
 <div class="toast" id="toast"></div>
 <div class="cf-wrap" id="cfWrap"></div>
+
+<!-- 공지 팝업 -->
+<div class="notice-ov" id="noticeOv">
+  <div class="notice-box">
+    <div class="notice-header">
+      <div class="notice-icon">📢</div>
+      <div class="notice-title" id="noticeTitle">공지사항</div>
+    </div>
+    <div class="notice-body">
+      <div class="notice-content" id="noticeContent"></div>
+    </div>
+    <div class="notice-footer">
+      <button class="btn-notice-skip" onclick="dismissNotice(true)">오늘 하루 보지 않기</button>
+      <button class="btn-notice-ok" onclick="dismissNotice(false)">확인</button>
+    </div>
+  </div>
+</div>
+
 <div class="wm">made by 박선생</div>
 
 <script>
@@ -697,7 +730,9 @@ function goMain() {
   isResubmitMode = false;
   renderMain();
   switchTab('today');
-  // 접속 시 자동 새로고침 1회 (미동기화 재시도 + 설정 갱신 + 기록 최신화)
+  // 접속 시 공지 팝업 표시 (새로고침보다 먼저)
+  showNoticeIfNeeded();
+  // 접속 시 자동 새로고침 1회
   setTimeout(() => globalRefresh(), 800);
 }
 
@@ -1421,7 +1456,32 @@ function loadScriptOnce(src) {
   });
 }
 
-/* ══ BOOT ══ */
+/* ══════════════════════════════════════════
+   공지 팝업
+══════════════════════════════════════════ */
+function showNoticeIfNeeded() {
+  const c = cfg();
+  if (!c.noticeActive || !c.noticeContent) return;  // 공지 비활성화 또는 내용 없음
+
+  // 오늘 하루 보지 않기 체크
+  const skipKey = 'notice_skip_' + (c.noticeUpdatedAt || '0');
+  if (localStorage.getItem(skipKey) === 'true') return;
+
+  document.getElementById('noticeTitle').textContent  = c.noticeTitle   || '공지사항';
+  document.getElementById('noticeContent').textContent = c.noticeContent || '';
+  document.getElementById('noticeOv').classList.add('on');
+}
+
+function dismissNotice(skipToday) {
+  document.getElementById('noticeOv').classList.remove('on');
+  if (skipToday) {
+    const c = cfg();
+    const skipKey = 'notice_skip_' + (c.noticeUpdatedAt || '0');
+    localStorage.setItem(skipKey, 'true');
+  }
+}
+
+
 boot();
 </script>
 </body>
